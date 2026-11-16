@@ -1,0 +1,43 @@
+{
+  "name": "e-qabyldau",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "node --env-file-if-exists=.env server/start.mjs",
+    "start": "node --env-file-if-exists=.env server/start.mjs",
+    "staff:setup": "node --env-file-if-exists=.env scripts/staff-setup.mjs",
+    "backup": "node --env-file-if-exists=.env scripts/backup.mjs",
+    "share:day": "npm run build && node --env-file-if-exists=.env scripts/share-day.mjs",
+    "test": "node --test server/*.test.mjs",
+    "test:auth": "node --test server/auth.test.mjs",
+    "test:ticket-browser": "node scripts/ticket-browser-check.mjs"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "jsqr": "^1.4.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.6"
+  }
+}
