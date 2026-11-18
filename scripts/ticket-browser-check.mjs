@@ -279,7 +279,7 @@ try {
   await evaluate("fill('.filters input[type=date]','')")
   await waitFor("document.querySelectorAll('tbody tr').length===1",'New filter after an older failure')
   await delay(800)
-  assert.equal(await evaluate("Boolean(document.querySelector('.staff>.alert'))"),false,'An older error must not overwrite current results')
+  assert.equal(await evaluate("Boolean(document.querySelector('.staff-workspace>.alert'))"),false,'An older error must not overwrite current results')
   await evaluate('window.fetch=window.realFetch')
   await evaluate("document.querySelector('.staff-heading button').click()")
   await waitFor("!document.querySelector('.staff')",'Admin logout')

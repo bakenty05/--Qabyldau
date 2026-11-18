@@ -23,7 +23,7 @@ let browser
 try {
   browser=await browserDriver({directory:output})
   const {send,evaluate,waitFor,fill,click,screenshot}=browser
-  const tab=async label=>{await evaluate(`[...document.querySelectorAll('.tabs button')].find(button=>button.textContent===${JSON.stringify(label)}).click()`)}
+  const tab=async label=>{await evaluate(`(()=>{const trigger=document.querySelector('.staff-menu-trigger');if(trigger&&getComputedStyle(trigger).display!=='none')trigger.click()})()`);await evaluate(`[...document.querySelectorAll('.tabs button')].find(button=>button.textContent===${JSON.stringify(label)}).click()`)}
   const login=async(username,secret)=>{
     await click('.header-actions>.outline');await waitFor('.modal input[name=username]','Login form')
     await fill('input[name=username]',username);await fill('input[name=password]',secret);await evaluate('document.querySelector(".modal form").requestSubmit()');await waitFor('.staff .tabs','Staff cabinet')
@@ -76,7 +76,7 @@ try {
   await screenshot('privacy-draft-mobile.png')
   await tab('Ұйым баптаулары')
   await evaluate(`(()=>{const fields=document.querySelectorAll('.staff form input');const values=['Сынақ ұйымы','Сынақ мекенжайы','+77001112233'];fields.forEach((field,index)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,values[index]);field.dispatchEvent(new Event('input',{bubbles:true}))})})()`)
-  await evaluate('document.querySelector(".staff form").requestSubmit()');await waitFor('.staff>[role=status]','Organization saved')
+  await evaluate('document.querySelector(".staff form").requestSubmit()');await waitFor('.staff-workspace>[role=status]','Organization saved')
   await tab('Деректер шарттары');await waitFor('textarea[name=privacyKK]:enabled','Privacy reload')
   assert.equal(await evaluate('document.querySelector("textarea[name=privacyKK]").value.includes("ЖОБА")'),true,'Draft survives navigation')
   await fill('textarea[name=privacyKK]','Сынақ ұйымының бекітілген шарттары. '.repeat(20));await fill('textarea[name=privacyRU]','Утверждённые условия тестовой организации. '.repeat(20))
