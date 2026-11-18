@@ -228,7 +228,7 @@ try {
     await waitFor("document.querySelector('.filters select')?.options.length>1",'Staff data')
   }
   await signIn('browser.admin')
-  assert.equal(await evaluate("document.querySelectorAll('.tabs button').length"),7)
+  assert.equal(await evaluate("document.querySelectorAll('.tabs button').length"),10)
   for(const [tab,selector] of [[1,'.department-editor'],[2,'.user-card'],[3,'.staff .narrow'],[4,'.staff table'],[5,'.statistics']]) {
     await evaluate(`document.querySelectorAll('.tabs button')[${tab}].click()`)
     await waitFor(`document.querySelector('${selector}')`,'Admin tab '+tab)
@@ -284,7 +284,7 @@ try {
   await evaluate("document.querySelector('.staff-heading button').click()")
   await waitFor("!document.querySelector('.staff')",'Admin logout')
   await signIn('browser.staff')
-  assert.equal(await evaluate("document.querySelectorAll('.tabs button').length"),1)
+  assert.equal(await evaluate("document.querySelectorAll('.tabs button').length"),2)
   assert.deepEqual(await evaluate("[...document.querySelector('.filters select').options].map(option=>option.value)"),['',closedId])
   await evaluate("document.querySelector('.staff-heading button').click()")
   await waitFor("!document.querySelector('.staff')",'Staff logout')
@@ -369,7 +369,7 @@ try {
   await evaluate("document.querySelector('.staff-heading button').click()")
   await waitFor("!document.querySelector('.staff')",'Final admin logout')
   assert.deepEqual(errors,[])
-  console.log(JSON.stringify({booking:'passed',trimmedIssueValidation:'passed',phoneAutofill:'passed',availabilityRetry:'passed',phoneAndSixDigitCode:'passed',pngQrDecoded:true,qrAutoLookup:'passed',manualLookup:'passed',cancellation:'passed',failedCancellationKeepsTicket:true,pastCancellationHidden:true,responsiveWidths:[320,375,768,1366],bilingualBookingPreservesForm:true,bilingualLoginPreservesForm:true,languagePersistsOnReload:true,feedbackPreservesDraft:true,feedbackSubmittedAndReloaded:true,feedbackEscapesHtml:true,adminStatisticsCountsAndRatings:true,statisticsDateValidation:true,russianStatisticsMobileWidths:[320,375],specialDayClosedAndEdited:true,priorTicketsRetained:true,affectedAppointmentList:true,generalHolidayDisabled:true,explicitSaturdayBooked:true,specialDayDeletionRestoresSchedule:true,specialDaysMobileWidths:[320,375],skipLink:'passed',bootstrapConsumed:'passed',pendingAuthenticationLocked:'passed',newDepartmentReset:'passed',adminTabs:7,staffClosedDepartmentFilter:'passed',filterRace:'passed',staleFilterFailure:'passed',csvWaitsForFilter:true,logout:'passed',pdf:'saved',runtimeErrors:0,artifacts:output}))
+  console.log(JSON.stringify({booking:'passed',trimmedIssueValidation:'passed',phoneAutofill:'passed',availabilityRetry:'passed',phoneAndSixDigitCode:'passed',pngQrDecoded:true,qrAutoLookup:'passed',manualLookup:'passed',cancellation:'passed',failedCancellationKeepsTicket:true,pastCancellationHidden:true,responsiveWidths:[320,375,768,1366],bilingualBookingPreservesForm:true,bilingualLoginPreservesForm:true,languagePersistsOnReload:true,feedbackPreservesDraft:true,feedbackSubmittedAndReloaded:true,feedbackEscapesHtml:true,adminStatisticsCountsAndRatings:true,statisticsDateValidation:true,russianStatisticsMobileWidths:[320,375],specialDayClosedAndEdited:true,priorTicketsRetained:true,affectedAppointmentList:true,generalHolidayDisabled:true,explicitSaturdayBooked:true,specialDayDeletionRestoresSchedule:true,specialDaysMobileWidths:[320,375],skipLink:'passed',bootstrapConsumed:'passed',pendingAuthenticationLocked:'passed',newDepartmentReset:'passed',adminTabs:10,staffClosedDepartmentFilter:'passed',filterRace:'passed',staleFilterFailure:'passed',csvWaitsForFilter:true,logout:'passed',pdf:'saved',runtimeErrors:0,artifacts:output}))
 } finally {
   for(const job of pending.values())clearTimeout(job.timer)
   socket?.close();browser.kill()

@@ -30,6 +30,17 @@ export function openStore(path = process.env.STAFF_DB_PATH || '.data/staff.sqlit
       token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS bootstrap_keys (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, used_at INTEGER);
+    CREATE TABLE IF NOT EXISTS password_resets (
+      token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS recovery_requests (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      requested_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS privacy_policies (
+      version TEXT PRIMARY KEY, text_kk TEXT NOT NULL, text_ru TEXT NOT NULL,
+      published_at INTEGER NOT NULL, published_by TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS privacy_draft (
+      id INTEGER PRIMARY KEY CHECK(id=1), text_kk TEXT NOT NULL, text_ru TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS departments (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
       active INTEGER NOT NULL DEFAULT 0, weekdays TEXT NOT NULL DEFAULT '[1,2,3,4,5]',
@@ -66,6 +77,7 @@ export function openStore(path = process.env.STAFF_DB_PATH || '.data/staff.sqlit
     CREATE UNIQUE INDEX IF NOT EXISTS exception_scope_date ON schedule_exceptions(date,COALESCE(department_id,''));
     CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY);`)
   const columns = db.prepare('PRAGMA table_info(appointments)').all().map(c=>c.name)
+  if (!columns.includes('consent_version')) db.exec("ALTER TABLE appointments ADD COLUMN consent_version TEXT NOT NULL DEFAULT 'legacy'")
   if (!columns.includes('slot_minutes')) db.exec('ALTER TABLE appointments ADD COLUMN slot_minutes INTEGER NOT NULL DEFAULT 30')
   if (!columns.includes('consent_text')) db.exec("ALTER TABLE appointments ADD COLUMN consent_text TEXT NOT NULL DEFAULT ''")
   const departmentColumns = db.prepare('PRAGMA table_info(departments)').all().map(c=>c.name)

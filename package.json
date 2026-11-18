@@ -8,13 +8,18 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "node --env-file-if-exists=.env server/start.mjs",
-    "start": "node --env-file-if-exists=.env server/start.mjs",
+    "start": "node --env-file-if-exists=.env scripts/supervise.mjs",
+    "start:direct": "node --env-file-if-exists=.env server/start.mjs",
+    "password:reset": "node --env-file-if-exists=.env scripts/password-reset.mjs",
+    "restore": "node --env-file-if-exists=.env scripts/restore.mjs",
     "staff:setup": "node --env-file-if-exists=.env scripts/staff-setup.mjs",
     "backup": "node --env-file-if-exists=.env scripts/backup.mjs",
     "share:day": "npm run build && node --env-file-if-exists=.env scripts/share-day.mjs",
     "test": "node --test server/*.test.mjs",
     "test:auth": "node --test server/auth.test.mjs",
-    "test:ticket-browser": "node scripts/ticket-browser-check.mjs"
+    "test:ticket-browser": "node scripts/ticket-browser-check.mjs",
+    "test:security-browser": "node scripts/security-browser-check.mjs",
+    "test:supervisor": "node scripts/supervisor-check.mjs"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

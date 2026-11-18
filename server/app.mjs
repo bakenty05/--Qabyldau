@@ -7,6 +7,8 @@ import { promisify } from 'node:util'
 import { openStore, digest, token, passwordHash, verifyPassword, publicUser, transaction, audit, slotsFor, localDate, DEFAULT_PRIVACY_TEXT } from './store.mjs'
 import { statistics } from './statistics.mjs'
 import { validDate, addDateDays, publicException, effectiveExceptions, receptionSchedule, validPeriods } from './schedule.mjs'
+import { issuePasswordReset, replacePassword } from './passwords.mjs'
+import { currentPolicy } from './privacy.mjs'
 
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status } }
 const fail = (status, message) => { throw new HttpError(status, message) }
@@ -17,7 +19,7 @@ const appointment = row => ({ id: row.id, number: `A-${String(row.sequence).padS
 const appointmentSelect = 'SELECT a.*, d.name AS department_name FROM appointments a JOIN departments d ON d.id=a.department_id'
 const department = row => ({ id: row.id, name: row.name, description: row.description, active: !!row.active, weekdays: JSON.parse(row.weekdays), startTime: row.start_time, endTime: row.end_time, breakStart: row.break_start, breakEnd: row.break_end, slotMinutes: row.slot_minutes })
 
-export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN || 'http://127.0.0.1:5173', production = process.env.NODE_ENV === 'production', staticDir = resolve('dist'), allowTestOrigin = false } = {}) {
+export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN || 'http://127.0.0.1:5173', production = process.env.NODE_ENV === 'production', staticDir = resolve('dist'), allowTestOrigin = false, operations = null } = {}) {
   if (production && !origin.startsWith('https://')) throw new Error('Production requires APP_ORIGIN=https://your-domain')
   const allowedOrigins = new Set([origin, ...(!production ? ['http://localhost:5173','http://127.0.0.1:3001','http://localhost:3001'] : [])])
   const send = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)) }
@@ -44,7 +46,7 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
   async function body(req) {
     if (!req.headers['content-type']?.startsWith('application/json')) fail(415, 'JSON қажет.')
     let size = 0; const chunks = []
-    for await (const chunk of req) { size += chunk.length; if (size > 64000) fail(413, 'Сұрау тым үлкен.'); chunks.push(chunk) }
+    for await (const chunk of req) { size += chunk.length; if (size > 128000) fail(413, 'Сұрау тым үлкен.'); chunks.push(chunk) }
     try { const value = JSON.parse(Buffer.concat(chunks).toString()); if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error(); return value }
     catch { fail(400, 'Сұрау пішімі дұрыс емес.') }
   }
@@ -60,7 +62,13 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
     db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(digest(raw), userId, Date.now()+8*3600000)
     res.setHeader('Set-Cookie', `eq_session=${raw}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production ? '; Secure' : ''}`)
   }
+  const clearCookie = res => res.setHeader('Set-Cookie',`eq_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${production?'; Secure':''}`)
+  const validNewPassword = value => typeof value === 'string' && value.length <= 128 && value.trim().length >= 15
+  function confirmPassword(user, password) {
+    if (typeof password !== 'string' || password.length > 128 || !verifyPassword(password, user.password_hash)) fail(400,'Ағымдағы құпиясөз дұрыс емес.')
+  }
   const server = createServer(async (req, res) => {
+    if(operations) res.once('finish',()=>operations.recordResponse(res.statusCode))
     res.setHeader('X-Content-Type-Options','nosniff')
     res.setHeader('Referrer-Policy','no-referrer')
     res.setHeader('X-Frame-Options','DENY')
@@ -71,7 +79,47 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
       if (path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(method) && !allowedOrigins.has(req.headers.origin) && !allowTestOrigin) fail(403, 'Сұрау көзі расталмады.')
         const ip = req.socket.remoteAddress || 'unknown'
-        if (path === '/api/health' && method === 'GET') return send(res,200,{ ok: true })
+        if (path === '/api/health' && method === 'GET') {
+          try { db.prepare('SELECT 1 FROM app_settings LIMIT 1').get(); return send(res,200,{ ok: true }) }
+          catch { return send(res,503,{ok:false}) }
+        }
+        if (path === '/api/admin/operations' && method === 'GET') {
+          authenticate(req,true)
+          return send(res,200,operations ? operations.status() : {enabled:false,available:false})
+        }
+        if (path === '/api/admin/operations/backup' && method === 'POST') {
+          const {user:u} = await staffBody(req,true)
+          if (!operations) fail(503,'Сақтық көшірме қызметі іске қосылмаған.')
+          limit(`backup:${u.id}`,12,3600000)
+          let result
+          try {result=operations.runBackup()} catch(error) {fail(503,error.message)}
+          audit(db,u.id,'backup.created',result.file)
+          return send(res,201,result)
+        }
+        if (path === '/api/privacy' && method === 'GET') return send(res,200,{policy:currentPolicy(db)})
+        if (path === '/api/admin/privacy' && method === 'GET') {
+          authenticate(req,true)
+          const draft = db.prepare('SELECT text_kk AS text,text_ru AS textRu FROM privacy_draft WHERE id=1').get() || null
+          return send(res,200,{policy:currentPolicy(db),draft})
+        }
+        if (path === '/api/admin/privacy' && method === 'POST') {
+          const {user:u,data:b}=await staffBody(req,true)
+          if (!text(b.text,1,12000) || typeof b.textRu !== 'string' || b.textRu.length>12000 || !['draft','publish'].includes(b.action)) fail(400,'Шарттар мәтінін тексеріңіз. Ең көбі 12000 таңба.')
+          if (b.action==='publish') {
+            const settings=Object.fromEntries(db.prepare('SELECT key,value FROM app_settings').all().map(r=>[r.key,r.value]))
+            if (b.approved!==true || !settings.organization?.trim() || !settings.phone?.trim() || b.text.trim().length<200 || b.textRu.trim().length<200) fail(400,'Жариялау үшін ұйым атауы мен телефонын толтырып, екі тілдегі шарттарды бекітіңіз.')
+            if (/\[[^\]]+\]|— ЖОБА|— ПРОЕКТ/.test(b.text+'\n'+b.textRu)) fail(400,'Жариялаудан бұрын үлгідегі жақшалы өрістерді толтырып, жоба белгісін алып тастаңыз.')
+          }
+          transaction(db,()=>{
+            db.prepare('INSERT INTO privacy_draft VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET text_kk=excluded.text_kk,text_ru=excluded.text_ru').run(b.text.trim(),b.textRu.trim())
+            if (b.action==='publish') {
+              const version=digest(JSON.stringify([b.text.trim(),b.textRu.trim()]))
+              db.prepare('INSERT INTO privacy_policies VALUES (?,?,?,?,?) ON CONFLICT(version) DO UPDATE SET published_at=excluded.published_at,published_by=excluded.published_by').run(version,b.text.trim(),b.textRu.trim(),Date.now(),u.id)
+            }
+            audit(db,u.id,b.action==='publish'?'privacy.published':'privacy.draft-saved','privacy')
+          })
+          return send(res,200,{policy:currentPolicy(db)})
+        }
         if (path === '/api/departments' && method === 'GET') return send(res,200,{ departments: db.prepare('SELECT * FROM departments WHERE active=1 ORDER BY name').all().map(department) })
         if (path === '/api/staff/departments' && method === 'GET') {
           const user = authenticate(req)
@@ -95,8 +143,9 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
           limit(`booking:${ip}`,20,3600000)
           const b = await body(req)
           if (!text(b.fullName,3,120) || b.fullName.trim().split(/\s+/).length < 2 || !text(b.issue,10,2000) || typeof b.phone !== 'string' || !/^\+7\d{10}$/.test(b.phone) || b.consent !== true || typeof b.departmentId !== 'string' || typeof b.date !== 'string' || typeof b.time !== 'string') fail(400,'Аты-жөніңізді, телефонды, мәселені және деректерді өңдеуге келісімді тексеріңіз.')
-          const configuration = Object.fromEntries(db.prepare('SELECT key,value FROM app_settings').all().map(r=>[r.key,r.value]))
-          const consentText = configuration.privacyText?.trim() || DEFAULT_PRIVACY_TEXT
+          const policy = currentPolicy(db)
+          if (b.consentVersion!==undefined && b.consentVersion!==policy.version) fail(409,'Деректерді өңдеу шарттары жаңарды. Шарттарды қайта оқып, келісімді растаңыз.')
+          const consentText = b.consentLanguage==='ru' && policy.textRu ? policy.textRu : policy.text
           const id = randomUUID()
           let accessToken
           transaction(db, () => {
@@ -109,6 +158,7 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
               accessToken = String(randomInt(1_000_000)).padStart(6,'0')
             } while (db.prepare('SELECT 1 FROM appointments WHERE phone=? AND access_hash=?').get(b.phone,digest(accessToken)))
             db.prepare('INSERT INTO appointments(id,access_hash,department_id,full_name,phone,issue,date,time,slot_minutes,consent_text,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(id,digest(accessToken),b.departmentId,b.fullName.trim(),b.phone,b.issue.trim(),b.date,b.time,receptionSchedule(db,d,b.date).slotMinutes,consentText,Date.now(),Date.now())
+            db.prepare('UPDATE appointments SET consent_version=? WHERE id=?').run(policy.version,id)
             audit(db,null,'appointment.created',id)
           })
           return send(res,201,{ appointment: appointment(db.prepare(`${appointmentSelect} WHERE a.id=?`).get(id)), accessToken })
@@ -150,6 +200,50 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
           return send(res,ticketMatch[2]==='/feedback'?201:200,{ appointment: { ...appointment(row), note: undefined }, feedback, feedbackEligible:feedbackEligible()&&!feedback })
         }
         if (path === '/api/auth/session' && method === 'GET') { const u = sessionUser(req); return send(res,200,{ user: u ? safeUser(db,u) : null }) }
+        if (path === '/api/auth/password' && method === 'POST') {
+          const {user:u,data:b}=await staffBody(req)
+          limit(`password:${u.id}`,5,900000)
+          confirmPassword(u,b.currentPassword)
+          if (!validNewPassword(b.newPassword)) fail(400,'Жаңа құпиясөз 15–128 таңба болуы керек.')
+          if (verifyPassword(b.newPassword,u.password_hash)) fail(400,'Жаңа құпиясөз бұрынғысынан өзгеше болуы керек.')
+          replacePassword(db,u.id,b.newPassword,'password.changed')
+          clearCookie(res)
+          return send(res,200,{ok:true})
+        }
+        if (path === '/api/auth/recovery' && method === 'POST') {
+          limit(`recovery:${ip}`,5,900000)
+          const b=await body(req)
+          if (!text(b.username,3,40)) fail(400,'Логинді енгізіңіз.')
+          const user=db.prepare("SELECT id FROM users WHERE username=? AND status='active'").get(b.username.trim().toLowerCase())
+          if(user) db.prepare('INSERT INTO recovery_requests VALUES (?,?) ON CONFLICT(user_id) DO NOTHING').run(user.id,Date.now())
+          return send(res,200,{message:'Егер белсенді аккаунт бар болса, сұрау әкімшіге жіберілді. Жеке басыңызды растау үшін ұйым әкімшісімен байланысыңыз.'})
+        }
+        if (path === '/api/auth/reset-password' && method === 'POST') {
+          limit(`reset:${ip}`,10,900000)
+          const b=await body(req)
+          if (typeof b.token!=='string' || !/^[a-f0-9]{64}$/.test(b.token)) fail(400,'Қалпына келтіру сілтемесі жарамсыз немесе мерзімі өткен.')
+          const row=db.prepare("SELECT r.*,u.status,u.password_hash FROM password_resets r JOIN users u ON u.id=r.user_id WHERE r.token_hash=? AND r.expires_at>?").get(digest(b.token),Date.now())
+          if (!row || row.status!=='active') fail(400,'Қалпына келтіру сілтемесі жарамсыз немесе мерзімі өткен.')
+          if (!validNewPassword(b.newPassword)) fail(400,'Жаңа құпиясөз 15–128 таңба болуы керек.')
+          if (verifyPassword(b.newPassword,row.password_hash)) fail(400,'Жаңа құпиясөз бұрынғысынан өзгеше болуы керек.')
+          replacePassword(db,row.user_id,b.newPassword,'password.reset')
+          clearCookie(res)
+          return send(res,200,{ok:true})
+        }
+        if (path === '/api/admin/recovery' && method === 'GET') {
+          authenticate(req,true)
+          return send(res,200,{requests:db.prepare("SELECT u.id,u.username,u.full_name AS fullName,u.role,r.requested_at AS requestedAt FROM recovery_requests r JOIN users u ON u.id=r.user_id WHERE u.status='active' ORDER BY r.requested_at").all()})
+        }
+        const resetMatch=/^\/api\/admin\/users\/([a-f0-9-]{36})\/reset-password$/.exec(path)
+        if(resetMatch && method==='POST') {
+          const {user:u,data:b}=await staffBody(req,true)
+          limit(`password:${u.id}`,5,900000)
+          confirmPassword(u,b.currentPassword)
+          const target=db.prepare("SELECT id,role,status FROM users WHERE id=?").get(resetMatch[1])
+          if(!target || target.role==='admin' || target.status!=='active') fail(400,'Тек белсенді қызметкерге қалпына келтіру сілтемесін беруге болады.')
+          const result=issuePasswordReset(db,target.id,u.id)
+          return send(res,201,result)
+        }
         if (path === '/api/auth/register' && method === 'POST') {
           limit(`register:${ip}`,10,3600000)
           const b = await body(req), username = typeof b.username === 'string' ? b.username.trim().toLowerCase() : ''
@@ -182,7 +276,7 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
         if (path === '/api/auth/logout' && method === 'POST') {
           const raw = /eq_session=([a-f0-9]{64})/.exec(req.headers.cookie || '')?.[1]
           if (raw) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(digest(raw))
-          res.setHeader('Set-Cookie',`eq_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${production?'; Secure':''}`)
+          clearCookie(res)
           return send(res,200,{ ok:true })
         }
         if (path === '/api/staff/appointments' && method === 'GET') {
@@ -263,6 +357,8 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
           if (target.role==='admin') fail(400,'Әкімші аккаунтын өшіруге болмайды.')
           transaction(db,()=>{
             db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id)
+            db.prepare('DELETE FROM password_resets WHERE user_id=?').run(target.id)
+            db.prepare('DELETE FROM recovery_requests WHERE user_id=?').run(target.id)
             db.prepare('DELETE FROM staff_departments WHERE user_id=?').run(target.id)
             db.prepare('UPDATE users SET approved_by=NULL WHERE approved_by=?').run(target.id)
             db.prepare('DELETE FROM users WHERE id=?').run(target.id)
@@ -281,6 +377,8 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
             db.prepare('DELETE FROM staff_departments WHERE user_id=?').run(target.id)
             for (const id of new Set(b.departmentIds)) db.prepare('INSERT INTO staff_departments VALUES (?,?)').run(target.id,id)
             db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id)
+            db.prepare('DELETE FROM password_resets WHERE user_id=?').run(target.id)
+            db.prepare('DELETE FROM recovery_requests WHERE user_id=?').run(target.id)
             audit(db,u.id,`user.${b.status}`,target.id)
           })
           return send(res,200,{ ok:true, user:safeUser(db,db.prepare('SELECT * FROM users WHERE id=?').get(target.id)) })
@@ -300,10 +398,15 @@ export function createApp({ db = openStore(), origin = process.env.APP_ORIGIN ||
         if (path === '/api/settings' && method === 'GET') {
           const settings = Object.fromEntries(db.prepare('SELECT key,value FROM app_settings').all().map(r=>[r.key,r.value]))
           if (!settings.privacyText?.trim()) settings.privacyText = DEFAULT_PRIVACY_TEXT
+          const policy=currentPolicy(db)
+          settings.privacyText=policy.text
+          settings.privacyTextRu=policy.textRu
+          settings.privacyVersion=policy.version
+          settings.privacyApproved=policy.approved
           return send(res,200,{ settings })
         }
         if (path === '/api/admin/settings' && method === 'POST') {
-          const {user:u,data:b}=await staffBody(req,true), keys=['organization','address','phone','privacyText']
+          const {user:u,data:b}=await staffBody(req,true), keys=['organization','address','phone',...(b.privacyText===undefined?[]:['privacyText'])]
           if (!keys.every(k=>typeof b[k]==='string'&&b[k].length<=(k==='privacyText'?5000:500))) fail(400,'Баптауларды тексеріңіз.')
           transaction(db,()=>{ for (const k of keys) db.prepare('INSERT INTO app_settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k,b[k]); audit(db,u.id,'settings.saved','organization') })
           return send(res,200,{ ok:true })

@@ -248,11 +248,12 @@ test('staff department filters include assigned closed departments and exclude o
 test('maximum length Kazakh organization settings save and oversized values are rejected',async t=>{
   const f=await fixture(t),admin=f.addUser(),cookie=(await f.request('/api/auth/login',admin)).cookie
   const settings={organization:'Ә'.repeat(500),address:'Қ'.repeat(500),phone:'Ұ'.repeat(500),privacyText:'Ө'.repeat(5000)}
+  const publicSettings={...settings,privacyTextRu:'',privacyVersion:digest(settings.privacyText),privacyApproved:false}
   assert.equal((await f.request('/api/admin/settings',settings,{cookie})).status,200)
-  assert.deepEqual((await f.request('/api/settings')).body.settings,settings)
+  assert.deepEqual((await f.request('/api/settings')).body.settings,publicSettings)
   assert.equal((await f.request('/api/admin/settings',{...settings,address:'Қ'.repeat(501)},{cookie})).status,400)
   assert.equal((await f.request('/api/admin/settings',{...settings,privacyText:'Ө'.repeat(5001)},{cookie})).status,400)
-  assert.deepEqual((await f.request('/api/settings')).body.settings,settings)
+  assert.deepEqual((await f.request('/api/settings')).body.settings,publicSettings)
 })
 test('an admin can approve pending staff with department access and the staff can sign in',async t=>{
   const f=await fixture(t),admin=f.addUser(),staff=f.addUser('staff','pending'),departmentId=f.addDepartment()
